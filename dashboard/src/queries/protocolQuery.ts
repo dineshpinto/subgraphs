@@ -2,7 +2,7 @@ import { gql } from "@apollo/client";
 
 export const ProtocolQuery = gql`
   {
-    protocols {
+    protocols(subgraphError: allow) {
       type
       schemaVersion
       subgraphVersion
@@ -12,6 +12,9 @@ export const ProtocolQuery = gql`
     }
     _meta {
       deployment
+      block {
+        number
+      }
     }
   }
 `;

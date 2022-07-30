@@ -2,30 +2,24 @@ import { Address, BigInt, ethereum, log } from "@graphprotocol/graph-ts";
 import {
   ActionPaused1,
   Comptroller,
+  MarketEntered,
+  MarketExited,
   MarketListed,
   NewCollateralFactor,
   NewLiquidationIncentive,
   NewPriceOracle,
 } from "../../../generated/Comptroller/Comptroller";
 import {
-  Mint as MintNew,
-  Redeem as RedeemNew,
-  Borrow as BorrowNew,
-  RepayBorrow as RepayBorrowNew,
-  LiquidateBorrow as LiquidateBorrowNew,
+  Mint,
+  Redeem,
+  Borrow,
+  RepayBorrow,
+  LiquidateBorrow,
+  NewReserveFactor,
   AccrueInterest as AccrueInterestNew,
-  NewReserveFactor as NewReserveFactorNew,
-} from "../../../generated/templates/CTokenNew/CTokenNew";
-import {
-  Mint as MintOld,
-  Redeem as RedeemOld,
-  Borrow as BorrowOld,
-  RepayBorrow as RepayBorrowOld,
-  LiquidateBorrow as LiquidateBorrowOld,
-  AccrueInterest as AccrueInterestOld,
-  NewReserveFactor as NewReserveFactorOld,
-} from "../../../generated/templates/CTokenOld/CTokenOld";
-import { CTokenOld, CTokenNew } from "../../../generated/templates";
+} from "../../../generated/templates/CToken/CToken";
+import { AccrueInterest as AccrueInterestOld } from "../../../generated/templates/CTokenOld/CTokenOld";
+import { CToken as CTokenContract } from "../../../generated/templates/CToken/CToken";
 import {
   LendingProtocol,
   Market,
@@ -34,9 +28,14 @@ import {
 } from "../../../generated/schema";
 import {
   CCOMP_ADDRESS,
+  CETH_ADDRESS,
   comptrollerAddr,
   COMPTROLLER_ADDRESS,
   COMP_ADDRESS,
+  ETH_ADDRESS,
+  ETH_DECIMALS,
+  ETH_NAME,
+  ETH_SYMBOL,
   METHODOLOGY_VERSION,
   Network,
   PROTOCOL_NAME,
@@ -55,13 +54,13 @@ import {
   setBorrowInterestRate,
   setSupplyInterestRate,
   snapshotFinancials,
-  snapshotMarket,
   TokenData,
   UpdateMarketData,
   _getOrCreateProtocol,
   _handleActionPaused,
   _handleBorrow,
   _handleLiquidateBorrow,
+  _handleMarketEntered,
   _handleMarketListed,
   _handleMint,
   _handleNewCollateralFactor,
@@ -71,7 +70,7 @@ import {
   _handleRedeem,
   _handleRepayBorrow,
 } from "../../../src/mapping";
-import { CToken } from "../../../generated/Comptroller/CToken";
+import { CToken, CTokenOld } from "../../../generated/templates";
 import {
   BIGDECIMAL_ZERO,
   BIGINT_ZERO,
@@ -89,36 +88,79 @@ import {
 import { getUSDPriceOfToken } from "./prices";
 import { getUsdPricePerToken } from "./prices/index";
 import { PriceOracle2 } from "../../../generated/Comptroller/PriceOracle2";
+import { fetchTokenDecimals, fetchTokenName, fetchTokenSymbol } from "./token";
 
-//////////////////////////////////
-//// CTokenNew Level Handlers ////
-//////////////////////////////////
+///////////////////////////////
+//// CToken Level Handlers ////
+///////////////////////////////
 
-export function handleMintNew(event: MintNew): void {
+export function handleMint(event: Mint): void {
   let minter = event.params.minter;
   let mintAmount = event.params.mintAmount;
-  _handleMint(comptrollerAddr, minter, mintAmount, event);
+  let contract = CTokenContract.bind(event.address);
+  let balanceOfUnderlyingResult = contract.try_balanceOfUnderlying(
+    event.params.minter
+  );
+  _handleMint(
+    comptrollerAddr,
+    minter,
+    mintAmount,
+    balanceOfUnderlyingResult,
+    event
+  );
 }
 
-export function handleRedeemNew(event: RedeemNew): void {
+export function handleRedeem(event: Redeem): void {
   let redeemer = event.params.redeemer;
   let redeemAmount = event.params.redeemAmount;
-  _handleRedeem(comptrollerAddr, redeemer, redeemAmount, event);
+  let contract = CTokenContract.bind(event.address);
+  let balanceOfUnderlyingResult = contract.try_balanceOfUnderlying(
+    event.params.redeemer
+  );
+  _handleRedeem(
+    comptrollerAddr,
+    redeemer,
+    redeemAmount,
+    balanceOfUnderlyingResult,
+    event
+  );
 }
 
-export function handleBorrowNew(event: BorrowNew): void {
+export function handleBorrow(event: Borrow): void {
   let borrower = event.params.borrower;
   let borrowAmount = event.params.borrowAmount;
-  _handleBorrow(comptrollerAddr, borrower, borrowAmount, event);
+  let contract = CTokenContract.bind(event.address);
+  let borrowBalanceStoredResult = contract.try_borrowBalanceStored(
+    event.params.borrower
+  );
+  _handleBorrow(
+    comptrollerAddr,
+    borrower,
+    borrowAmount,
+    borrowBalanceStoredResult,
+    event
+  );
 }
 
-export function handleRepayBorrowNew(event: RepayBorrowNew): void {
+export function handleRepayBorrow(event: RepayBorrow): void {
   let payer = event.params.payer;
+  let borrower = event.params.borrower;
   let repayAmount = event.params.repayAmount;
-  _handleRepayBorrow(comptrollerAddr, payer, repayAmount, event);
+  let contract = CTokenContract.bind(event.address);
+  let borrowBalanceStoredResult = contract.try_borrowBalanceStored(
+    event.params.borrower
+  );
+  _handleRepayBorrow(
+    comptrollerAddr,
+    borrower,
+    payer,
+    repayAmount,
+    borrowBalanceStoredResult,
+    event
+  );
 }
 
-export function handleLiquidateBorrowNew(event: LiquidateBorrowNew): void {
+export function handleLiquidateBorrow(event: LiquidateBorrow): void {
   let cTokenCollateral = event.params.cTokenCollateral;
   let liquidator = event.params.liquidator;
   let borrower = event.params.borrower;
@@ -135,7 +177,7 @@ export function handleLiquidateBorrowNew(event: LiquidateBorrowNew): void {
   );
 }
 
-export function handleNewReserveFactorNew(event: NewReserveFactorNew): void {
+export function handleNewReserveFactor(event: NewReserveFactor): void {
   let marketID = event.address.toHexString();
   let newReserveFactorMantissa = event.params.newReserveFactorMantissa;
   _handleNewReserveFactor(marketID, newReserveFactorMantissa);
@@ -147,57 +189,6 @@ export function handleAccrueInterestNew(event: AccrueInterestNew): void {
     event.params.interestAccumulated,
     event.params.totalBorrows
   );
-}
-
-//////////////////////////////////
-//// CTokenOld Level Handlers ////
-//////////////////////////////////
-
-export function handleMintOld(event: MintOld): void {
-  let minter = event.params.minter;
-  let mintAmount = event.params.mintAmount;
-  _handleMint(comptrollerAddr, minter, mintAmount, event);
-}
-
-export function handleRedeemOld(event: RedeemOld): void {
-  let redeemer = event.params.redeemer;
-  let redeemAmount = event.params.redeemAmount;
-  _handleRedeem(comptrollerAddr, redeemer, redeemAmount, event);
-}
-
-export function handleBorrowOld(event: BorrowOld): void {
-  let borrower = event.params.borrower;
-  let borrowAmount = event.params.borrowAmount;
-  _handleBorrow(comptrollerAddr, borrower, borrowAmount, event);
-}
-
-export function handleRepayBorrowOld(event: RepayBorrowOld): void {
-  let payer = event.params.payer;
-  let repayAmount = event.params.repayAmount;
-  _handleRepayBorrow(comptrollerAddr, payer, repayAmount, event);
-}
-
-export function handleLiquidateBorrowOld(event: LiquidateBorrowOld): void {
-  let cTokenCollateral = event.params.cTokenCollateral;
-  let liquidator = event.params.liquidator;
-  let borrower = event.params.borrower;
-  let seizeTokens = event.params.seizeTokens;
-  let repayAmount = event.params.repayAmount;
-  _handleLiquidateBorrow(
-    comptrollerAddr,
-    cTokenCollateral,
-    liquidator,
-    borrower,
-    seizeTokens,
-    repayAmount,
-    event
-  );
-}
-
-export function handleNewReserveFactorOld(event: NewReserveFactorOld): void {
-  let marketID = event.address.toHexString();
-  let newReserveFactorMantissa = event.params.newReserveFactorMantissa;
-  _handleNewReserveFactor(marketID, newReserveFactorMantissa);
 }
 
 export function handleAccrueInterestOld(event: AccrueInterestOld): void {
@@ -213,13 +204,12 @@ export function handleAccrueInterestOld(event: AccrueInterestOld): void {
 ////////////////////////////////////
 
 export function handleMarketListed(event: MarketListed): void {
-  // create CToken with new abi
-  if (event.block.number.toI32() >= 8983575) {
-    CTokenNew.create(event.params.cToken);
-  } else {
-    // create CToken with old abi
+  // CToken ABI changes at block 8983575
+  // To handle we must create the old CToken in order to capture the old acrueInterest signature
+  if (event.block.number.toI32() <= 8983575) {
     CTokenOld.create(event.params.cToken);
   }
+  CToken.create(event.params.cToken);
   let cTokenAddr = event.params.cToken;
   let cToken = Token.load(cTokenAddr.toHexString());
   if (cToken != null) {
@@ -228,30 +218,47 @@ export function handleMarketListed(event: MarketListed): void {
   // this is a new cToken, a new underlying token, and a new market
 
   let protocol = getOrCreateProtocol();
-  let cTokenContract = CToken.bind(event.params.cToken);
+  let cTokenContract = CTokenContract.bind(event.params.cToken);
   let cTokenReserveFactorMantissa = getOrElse<BigInt>(
     cTokenContract.try_reserveFactorMantissa(),
     BIGINT_ZERO
   );
 
-  let underlyingTokenAddrResult = cTokenContract.try_underlying();
-  if (underlyingTokenAddrResult.reverted) {
-    log.warning(
-      "[handleMarketListed] could not fetch underlying token of cToken: {}",
-      [cTokenAddr.toHexString()]
-    );
-    return;
+  // get underlying token data
+  let underlyingTokenAddr: Address;
+  let underlyingName: string;
+  let underlyingSymbol: string;
+  let underlyingDecimals: i32;
+  if (event.params.cToken == Address.fromString(CETH_ADDRESS)) {
+    // must hard code ETH bc it cannot fetch 0x0 address
+    underlyingTokenAddr = Address.fromString(ETH_ADDRESS);
+    underlyingName = ETH_NAME;
+    underlyingSymbol = ETH_SYMBOL;
+    underlyingDecimals = ETH_DECIMALS;
+  } else {
+    // grab token normally
+    let underlyingTokenAddrResult = cTokenContract.try_underlying();
+    if (underlyingTokenAddrResult.reverted) {
+      log.warning(
+        "[handleMarketListed] could not fetch underlying token of cToken: {}",
+        [cTokenAddr.toHexString()]
+      );
+      return;
+    }
+    underlyingTokenAddr = underlyingTokenAddrResult.value;
+    underlyingName = fetchTokenName(underlyingTokenAddr);
+    underlyingSymbol = fetchTokenSymbol(underlyingTokenAddr);
+    underlyingDecimals = fetchTokenDecimals(underlyingTokenAddr);
   }
-  let underlyingTokenAddr = underlyingTokenAddrResult.value;
-  let underlyingTokenContract = ERC20.bind(underlyingTokenAddr);
+
   _handleMarketListed(
     new MarketListedData(
       protocol,
       new TokenData(
         underlyingTokenAddr,
-        getOrElse<string>(underlyingTokenContract.try_name(), "unknown"),
-        getOrElse<string>(underlyingTokenContract.try_symbol(), "unknown"),
-        getOrElse<i32>(underlyingTokenContract.try_decimals(), 0)
+        underlyingName,
+        underlyingSymbol,
+        underlyingDecimals
       ),
       new TokenData(
         cTokenAddr,
@@ -263,6 +270,22 @@ export function handleMarketListed(event: MarketListed): void {
       cTokenReserveFactorMantissa
     ),
     event
+  );
+}
+
+export function handleMarketEntered(event: MarketEntered): void {
+  _handleMarketEntered(
+    event.params.cToken.toHexString(),
+    event.params.account.toHexString(),
+    true
+  );
+}
+
+export function handleMarketExited(event: MarketExited): void {
+  _handleMarketEntered(
+    event.params.cToken.toHexString(),
+    event.params.account.toHexString(),
+    false
   );
 }
 
@@ -321,7 +344,7 @@ function handleAccrueInterest(
   totalBorrows: BigInt
 ): void {
   let marketAddress = event.address;
-  let cTokenContract = CToken.bind(marketAddress);
+  let cTokenContract = CTokenContract.bind(marketAddress);
   let protocol = getOrCreateProtocol();
   let oracleContract = PriceOracle2.bind(
     Address.fromString(protocol._priceOracle)
@@ -362,10 +385,23 @@ function handleAccrueInterest(
   updateRewards(event, market);
 
   // creates and initializes market snapshots
-  snapshotMarket(
-    event.address.toHexString(),
-    event.block.number,
-    event.block.timestamp
+
+  //
+  // daily snapshot
+  //
+  getOrCreateMarketDailySnapshot(
+    market,
+    event.block.timestamp,
+    event.block.number
+  );
+
+  //
+  // hourly snapshot
+  //
+  getOrCreateMarketHourlySnapshot(
+    market,
+    event.block.timestamp,
+    event.block.number
   );
 
   updateMarket(
@@ -374,7 +410,9 @@ function handleAccrueInterest(
     interestAccumulated,
     totalBorrows,
     event.block.number,
-    event.block.timestamp
+    event.block.timestamp,
+    false, // do not update all prices
+    comptrollerAddr
   );
   updateProtocol(comptrollerAddr);
 
@@ -393,7 +431,9 @@ function updateMarket(
   interestAccumulatedMantissa: BigInt,
   newTotalBorrow: BigInt,
   blockNumber: BigInt,
-  blockTimestamp: BigInt
+  blockTimestamp: BigInt,
+  updateMarketPrices: boolean,
+  comptrollerAddress: Address
 ): void {
   let market = Market.load(marketID);
   if (!market) {
@@ -552,8 +592,9 @@ function updateMarket(
 
   // update daily fields in marketDailySnapshot
   let dailySnapshot = getOrCreateMarketDailySnapshot(
-    market.id,
-    blockTimestamp.toI32()
+    market,
+    blockTimestamp,
+    blockNumber
   );
   dailySnapshot.dailyTotalRevenueUSD = dailySnapshot.dailyTotalRevenueUSD.plus(
     interestAccumulatedUSD
@@ -566,8 +607,9 @@ function updateMarket(
 
   // update hourly fields in marketHourlySnapshot
   let hourlySnapshot = getOrCreateMarketHourlySnapshot(
-    market.id,
-    blockTimestamp.toI32()
+    market,
+    blockTimestamp,
+    blockNumber
   );
   hourlySnapshot.hourlyTotalRevenueUSD =
     hourlySnapshot.hourlyTotalRevenueUSD.plus(interestAccumulatedUSD);

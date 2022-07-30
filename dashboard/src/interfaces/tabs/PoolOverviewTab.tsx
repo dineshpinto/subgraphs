@@ -18,8 +18,10 @@ const ChangePageEle = styled("div")`
 `;
 
 interface PoolOverviewTabProps {
+  totalPoolCount?: number;
   pools: any[];
   protocolType: string;
+  protocolNetwork: string;
   subgraphToQueryURL: string;
   poolOverviewRequest: { [x: string]: any };
   skipAmt: number;
@@ -30,9 +32,11 @@ interface PoolOverviewTabProps {
 
 // This component is for each individual subgraph
 function PoolOverviewTab({
+  totalPoolCount,
   pools,
   setPoolId,
   protocolType,
+  protocolNetwork,
   poolOverviewRequest,
   handleTabChange,
   paginate,
@@ -41,26 +45,53 @@ function PoolOverviewTab({
   const [tableIssues, setTableIssues] = useState<{ message: string; type: string; level: string; fieldName: string }[]>(
     [],
   );
-  const issues: { message: string; type: string; level: string; fieldName: string }[] = tableIssues;
-
   const navigate = useNavigate();
   const href = new URL(window.location.href);
   const p = new URLSearchParams(href.search);
-  if (!!poolOverviewRequest.poolOverviewError && issues.filter((x) => x.fieldName === "PoolOverviewTab").length === 0) {
+
+  const skipAmtParam = p.get("skipAmt") || "0";
+  const [currentPage, setCurrentPage] = useState(skipAmtParam ? (parseInt(skipAmtParam) + 50) / 50 : 1);
+  const issues: { message: string; type: string; level: string; fieldName: string }[] = tableIssues;
+
+  if (poolOverviewRequest.poolOverviewError && issues.filter((x) => x.fieldName === "Pool Overview Tab").length === 0) {
     issues.push({
       message: poolOverviewRequest?.poolOverviewError?.message + ". Refresh and try again.",
       type: "",
-      fieldName: "PoolOverviewTab",
+      fieldName: "Pool Overview Tab",
       level: "critical",
     });
   }
 
+  let morePages = false;
+  if (totalPoolCount) {
+    if (currentPage !== Math.ceil(totalPoolCount / 50)) {
+      morePages = true;
+    }
+  }
+
+  let loadingEle = null;
   if (poolOverviewRequest.poolOverviewLoading) {
-    return <CircularProgress sx={{ margin: 6 }} size={50} />;
+    loadingEle = (
+      <div>
+        <CircularProgress sx={{ margin: 6 }} size={50} />
+      </div>
+    );
+    if (pools.length === 0 || !pools) {
+      return loadingEle;
+    } else if (morePages) {
+      loadingEle = (
+        <div style={{ marginLeft: "16px", marginBottom: "15px" }}>
+          <div>
+            <CircularProgress sx={{ margin: 6 }} size={50} />
+          </div>
+          <span>Loading results...</span>
+        </div>
+      );
+    }
   }
 
   let nextButton = null;
-  if (pools.length === 50) {
+  if (pools.length === 50 || morePages) {
     nextButton = (
       <ChangePageEle
         onClick={() => {
@@ -68,6 +99,7 @@ function PoolOverviewTab({
           paginate(skipAmt + 50);
           p.set("skipAmt", (skipAmt + 50).toString());
           navigate("?" + p.toString());
+          setCurrentPage((prev) => prev + 1);
           setTableIssues([]);
         }}
       >
@@ -86,6 +118,7 @@ function PoolOverviewTab({
           paginate(0);
           p.delete("skipAmt");
           navigate("?" + p.toString());
+          setCurrentPage((prev) => prev - 1);
           setTableIssues([]);
         }}
       >
@@ -101,6 +134,7 @@ function PoolOverviewTab({
           paginate(skipAmt - 50);
           p.set("skipAmt", (skipAmt - 50).toString());
           navigate("?" + p.toString());
+          setCurrentPage((prev) => prev - 1);
           setTableIssues([]);
         }}
       >
@@ -110,20 +144,6 @@ function PoolOverviewTab({
     );
   }
 
-  if (!poolOverviewRequest.poolOverviewLoading && pools.length === 0) {
-    if (skipAmt > 0) {
-      p.delete("skipAmt");
-      window.location.href = `${href.origin}${href.pathname}?${p.toString()}`;
-    } else if (issues.filter((x) => x.fieldName === "PoolOverviewTab").length === 0) {
-      issues.push({
-        message: "No pools returned in pool overview.",
-        type: "POOL",
-        level: "error",
-        fieldName: "poolOverview",
-      });
-    }
-  }
-
   return (
     <>
       <IssuesDisplay issuesArrayProps={tableIssues} allLoaded={true} oneLoaded={true} />
@@ -131,6 +151,7 @@ function PoolOverviewTab({
         datasetLabel=""
         dataTable={pools}
         protocolType={protocolType}
+        protocolNetwork={protocolNetwork}
         skipAmt={skipAmt}
         issueProps={tableIssues}
         setPoolId={(x) => setPoolId(x)}
@@ -139,8 +160,12 @@ function PoolOverviewTab({
           setTableIssues(x);
         }}
       />
+      {loadingEle}
       <div style={{ display: "flex", flexDirection: "row", justifyContent: "space-between", width: "100%" }}>
         {prevButton}
+        <span>
+          {totalPoolCount && !loadingEle ? `Page ${currentPage} out of ${Math.ceil(totalPoolCount / 50)}` : null}
+        </span>
         {nextButton}
       </div>
     </>

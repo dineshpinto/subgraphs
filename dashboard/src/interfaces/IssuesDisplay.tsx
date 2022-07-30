@@ -3,7 +3,7 @@ import { CircularProgress, Typography } from "@mui/material";
 import React, { useEffect } from "react";
 import { useState } from "react";
 
-const IssuesContainer = styled("div")<{ $hasCritical: boolean }>`
+const IssuesContainer = styled("div") <{ $hasCritical: boolean }>`
   max-height: 230px;
   overflow-y: scroll;
   background-color: rgb(28, 28, 28);
@@ -37,6 +37,16 @@ const messagesByLevel = (
         issuesMsg = `
           ${issuesArray[x].fieldName} cumulative value dropped on snapshot id ${issuesArray[x].message}. Cumulative values should always increase.`;
       }
+      if (issuesArray[x].type === "TOTAL_REV") {
+        const msgObj = JSON.parse(issuesArray[x].message);
+        issuesMsg = `
+          ${issuesArray[x].fieldName} sum value (${msgObj.totalRevenue}) diverged from protocol + supply revenue (${msgObj.sumRevenue}) by ${msgObj.divergence}% starting from snapshot id ${msgObj.timeSeriesInstanceId}.`;
+      }
+      if (issuesArray[x].type === "TOTAL_TX") {
+        const msgObj = JSON.parse(issuesArray[x].message);
+        issuesMsg = `
+          ${issuesArray[x].fieldName} sum value (${msgObj.totalTx}) diverged from sum of individual transactions (${msgObj.individualTxSum}) by ${msgObj.divergence}% starting from snapshot id ${msgObj.timeSeriesInstanceId}.`;
+      }
       if (issuesArray[x].type === "TVL-") {
         issuesMsg = `${issuesArray[x].fieldName} is below 1000.`;
       }
@@ -53,7 +63,11 @@ const messagesByLevel = (
         issuesMsg = issuesArray[x].message;
       }
       if (issuesArray[x].type === "TOK") {
-        issuesMsg = `'${issuesArray[x].fieldName}' in the timeseries data refers to a token that does not exist on this pool. '${issuesArray[x].message}' references an invalid index.`;
+        let endStr = `has elements up to index [${issuesArray[x]?.message?.split('///')[1]}]`;
+        if (issuesArray[x]?.message?.split('///')[1] === "-1") {
+          endStr = `is empty`;
+        }
+        issuesMsg = `${issuesArray[x].fieldName?.split("///")[0]} array has elements up to index [${issuesArray[x].fieldName?.split("///")[1]}], but ${issuesArray[x]?.message?.split('///')[0]} array ${endStr}.`;
       }
       if (issuesArray[x].type === "NEG") {
         const msgObj = JSON.parse(issuesArray[x].message);
@@ -68,8 +82,14 @@ const messagesByLevel = (
       if (issuesArray[x].type === "RATEZERO") {
         issuesMsg = `'${issuesArray[x].fieldName}' has a zero rate.`;
       }
+      if (issuesArray[x].type === "RATEDEC") {
+        issuesMsg = `'${issuesArray[x].fieldName}' has a rate between 0% and ${issuesArray[x].message}. Check that the decimals on this value are correct.`;
+      }
       if (issuesArray[x].type === "EMPTY") {
         issuesMsg = `Entity ${issuesArray[x].fieldName} has no instances. This could mean that the pool was created but no transactions were detected on it.`;
+      }
+      if (issuesArray[x].type === "BORROW") {
+        issuesMsg = `Entity ${issuesArray[x].fieldName} could not calculate BORROW Reward APR. The Pool Borrow Balance is not available.`;
       }
       issuesMsgs.push(<li key={`${x}-${issuesArray[x].fieldName}`}>{issuesMsg}</li>);
     }
@@ -96,7 +116,7 @@ export const IssuesDisplay = ({ issuesArrayProps, allLoaded, oneLoaded }: Issues
       <CircularProgress sx={{ margin: 6 }} size={50} />
     </>
   );
-  if (!oneLoaded && issuesArray.length === 0) {
+  if (!oneLoaded && !allLoaded && issuesArray.length === 0) {
     return <IssuesContainer $hasCritical={false}>{waitingElement}</IssuesContainer>;
   }
 
